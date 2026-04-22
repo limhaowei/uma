@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 import discord
 from discord import app_commands
@@ -9,14 +10,86 @@ from scraper import fetch_club_data
 
 logger = logging.getLogger(__name__)
 
+# ANSI codes (Discord supports these inside ```ansi code blocks)
+_YELLOW = "\033[33m"
+_RESET  = "\033[0m"
 
-def _fmt(n: int) -> str:
-    """Format a fan count into a compact string (e.g. 1234567 → 1.23M)."""
-    if abs(n) >= 1_000_000:
-        return f"{n / 1_000_000:.2f}M"
-    if abs(n) >= 1_000:
-        return f"{n / 1_000:.1f}K"
-    return str(n)
+# Column widths — total ~53 chars to fit inside a Discord embed code block
+_W_RANK    = 3
+_W_NAME    = 12
+_W_DAILY   = 6
+_W_SURPLUS = 7
+_W_TARGET  = 6
+_W_TOTAL   = 6
+
+_HEADER = (
+    f"{'#':>{_W_RANK}} | "
+    f"{'Name':<{_W_NAME}} | "
+    f"{'Daily':>{_W_DAILY}} | "
+    f"{'Surplus':>{_W_SURPLUS}} | "
+    f"{'Target':>{_W_TARGET}} | "
+    f"{'Total':>{_W_TOTAL}}"
+)
+_ROW_WIDTH = len(_HEADER)
+_SEP_LINE  = "-" * _ROW_WIDTH
+
+
+def _fmt(n: int, sign: bool = False) -> str:
+    """Compact fan-count formatter.  sign=True forces a + prefix on positives."""
+    prefix = ("+" if n >= 0 else "-") if sign else ("" if n >= 0 else "-")
+    a = abs(n)
+    if a >= 1_000_000:
+        return f"{prefix}{a / 1_000_000:.1f}M"
+    if a >= 1_000:
+        return f"{prefix}{a // 1_000}K"
+    return f"{prefix}{a}"
+
+
+def _row(rank: int, name: str, daily: int, surplus: int, target: int, total: int) -> str:
+    name_col    = name[:_W_NAME]
+    rank_col    = f"{rank}."
+    daily_col   = _fmt(daily,   sign=True)
+    surplus_col = _fmt(surplus, sign=True)
+    target_col  = _fmt(target)
+    total_col   = _fmt(total)
+    return (
+        f"{rank_col:>{_W_RANK}} | "
+        f"{name_col:<{_W_NAME}} | "
+        f"{daily_col:>{_W_DAILY}} | "
+        f"{surplus_col:>{_W_SURPLUS}} | "
+        f"{target_col:>{_W_TARGET}} | "
+        f"{total_col:>{_W_TOTAL}}"
+    )
+
+
+def _divider(label: str) -> str:
+    side = (_ROW_WIDTH - len(label) - 2) // 2
+    return "-" * side + f" {label} " + "-" * side
+
+
+def _build_table(members: list, data_day: int, daily_goal: int) -> str:
+    lines = [_HEADER, _SEP_LINE]
+
+    above, below = [], []
+    for m in members:
+        days_active = data_day - m["join_day"] + 1
+        target  = daily_goal * days_active
+        surplus = m["monthly_earned"] - target
+        (above if surplus >= 0 else below).append((m, target, surplus))
+
+    rank = 1
+    for m, target, surplus in above:
+        lines.append(_row(rank, m["trainer_name"], m["daily_earned"], surplus, target, m["monthly_earned"]))
+        rank += 1
+
+    if below:
+        lines.append(_divider("Players Behind Quota"))
+        for m, target, surplus in below:
+            line = _row(rank, m["trainer_name"], m["daily_earned"], surplus, target, m["monthly_earned"])
+            lines.append(f"{_YELLOW}{line}{_RESET}")
+            rank += 1
+
+    return "```ansi\n" + "\n".join(lines) + "\n```"
 
 
 class FancountCog(commands.Cog):
@@ -59,52 +132,37 @@ class FancountCog(commands.Cog):
             )
             return
 
-        members = result["members"]
-        data_day = result["data_day"]
-        daily_goal = club_row["daily_goal"]
+        members     = result["members"]
+        data_day    = result["data_day"]
+        monthly_rank = result.get("monthly_rank")
+        daily_goal  = club_row["daily_goal"]
+
+        rank_str  = f" — Global Ranking #{monthly_rank}" if monthly_rank else ""
+        timestamp = datetime.now().strftime("%B %d, %Y")
 
         embed = discord.Embed(
-            title=f"📊 {club}  —  Day {data_day}",
-            color=discord.Color.purple(),
+            title=f"🏆 Leaderboard (Club: {club} — Day {data_day}{rank_str})",
+            color=discord.Color.gold(),
         )
+        embed.set_footer(text=f"Data retrieved from Uma.moe API  •  {timestamp}")
 
         if not members:
             embed.description = "No active members found in the API response."
             await interaction.followup.send(embed=embed)
             return
 
-        lines = []
-        for rank, member in enumerate(members, start=1):
-            name = member["trainer_name"]
-            earned = member["monthly_earned"]
-            join_day = member["join_day"]
-
-            # Days this member has been active this month
-            days_active = data_day - join_day + 1
-
-            if daily_goal > 0:
-                target = daily_goal * days_active
-                diff = earned - target
-                sign = "+" if diff >= 0 else ""
-                diff_str = f"{sign}{_fmt(diff)}"
-                indicator = "🟢" if diff >= 0 else "🔴"
-
-                joined_note = f" *(joined d{join_day})*" if join_day > 1 else ""
-                lines.append(
-                    f"`{rank:>2}.` {indicator} **{name}**{joined_note}\n"
-                    f"       {_fmt(earned)} / {_fmt(target)}  `{diff_str}`"
+        if daily_goal <= 0:
+            embed.description = (
+                "⚠️ No daily goal set — use `/set_goal` first.\n\n"
+                + "```\n"
+                + "\n".join(
+                    f"{i:>2}. {m['trainer_name']:<12}  {_fmt(m['monthly_earned'])}"
+                    for i, m in enumerate(members, 1)
                 )
-            else:
-                lines.append(f"`{rank:>2}.` **{name}** — {_fmt(earned)}")
-
-        embed.description = "\n".join(lines)
-
-        if daily_goal > 0:
-            embed.set_footer(
-                text=f"earned / target  •  daily goal: {_fmt(daily_goal)}/day  •  data day {data_day}"
+                + "\n```"
             )
         else:
-            embed.set_footer(text=f"data day {data_day}  •  no daily goal set — use /set_goal")
+            embed.description = _build_table(members, data_day, daily_goal)
 
         await interaction.followup.send(embed=embed)
 

@@ -46,8 +46,8 @@ def _parse_members(raw_members: list, data_day: int) -> list:
             continue
 
         current_lifetime = lifetime_fans[day_index]
+        # Member has left the club
         if current_lifetime == 0:
-            # Member has left the club
             continue
 
         # Find join day: first index with non-zero fans (1-based)
@@ -61,10 +61,18 @@ def _parse_members(raw_members: list, data_day: int) -> list:
 
         monthly_earned = current_lifetime - starting_lifetime
 
+        # Fans earned on data_day specifically (0 if it's their first day)
+        if data_day > join_day and data_day >= 2:
+            prev_lifetime = lifetime_fans[data_day - 2]
+            daily_earned = current_lifetime - prev_lifetime
+        else:
+            daily_earned = monthly_earned
+
         results.append(
             {
                 "trainer_name": trainer_name,
                 "monthly_earned": monthly_earned,
+                "daily_earned": daily_earned,
                 "join_day": join_day,
             }
         )
@@ -127,4 +135,5 @@ async def fetch_club_data(circle_id: str) -> dict:
             )
 
     members = _parse_members(raw_members, data_day)
-    return {"members": members, "data_day": data_day}
+    monthly_rank = (data.get("circle") or {}).get("monthly_rank")
+    return {"members": members, "data_day": data_day, "monthly_rank": monthly_rank}
