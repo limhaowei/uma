@@ -10,24 +10,25 @@ from scraper import fetch_club_data
 
 logger = logging.getLogger(__name__)
 
-# ANSI colour codes (supported in ```ansi code blocks)
+# ANSI colour codes (rendered inside ```ansi code blocks)
 _YELLOW = "\033[33m"
 _RESET  = "\033[0m"
 
-# Column widths — plain message code block, no embed width constraint.
-_W_RANK    = 3
-_W_NAME    = 16   # fits longest Umamusume trainer names (~15 chars)
-_W_DAILY   = 6
-_W_SURPLUS = 7
-_W_TARGET  = 6
-_W_TOTAL   = 6
+# Column widths — embed code block, ~46 char limit.
+# Using | separator (1 char) to fit all 5 columns: 3+5+13+6+7+6+5 = 45 chars.
+_W_RANK    = 3   # "30." = 3 chars
+_W_NAME    = 13  # names > 13 chars are truncated
+_W_DAILY   = 6   # "+9.9M" = 6 chars; "Daily" = 5 → padded to 6
+_W_SURPLUS = 7   # "Surplus" header = 7 chars
+_W_TARGET  = 6   # "Target" header = 6 chars
+_W_TOTAL   = 5   # "Total" header = 5 chars
 
 _HEADER = (
-    f"{'#':>{_W_RANK}} | "
-    f"{'Name':<{_W_NAME}} | "
-    f"{'Daily':>{_W_DAILY}} | "
-    f"{'Surplus':>{_W_SURPLUS}} | "
-    f"{'Target':>{_W_TARGET}} | "
+    f"{'#':>{_W_RANK}}|"
+    f"{'Name':<{_W_NAME}}|"
+    f"{'Daily':>{_W_DAILY}}|"
+    f"{'Surplus':>{_W_SURPLUS}}|"
+    f"{'Target':>{_W_TARGET}}|"
     f"{'Total':>{_W_TOTAL}}"
 )
 _ROW_WIDTH = len(_HEADER)
@@ -46,11 +47,11 @@ def _fmt(n: int, sign: bool = False) -> str:
 
 def _row(rank: int, name: str, daily: int, surplus: int, target: int, total: int) -> str:
     return (
-        f"{f'{rank}.':>{_W_RANK}} | "
-        f"{name[:_W_NAME]:<{_W_NAME}} | "
-        f"{_fmt(daily, sign=True):>{_W_DAILY}} | "
-        f"{_fmt(surplus, sign=True):>{_W_SURPLUS}} | "
-        f"{_fmt(target):>{_W_TARGET}} | "
+        f"{f'{rank}.':>{_W_RANK}}|"
+        f"{name[:_W_NAME]:<{_W_NAME}}|"
+        f"{_fmt(daily, sign=True):>{_W_DAILY}}|"
+        f"{_fmt(surplus, sign=True):>{_W_SURPLUS}}|"
+        f"{_fmt(target):>{_W_TARGET}}|"
         f"{_fmt(total):>{_W_TOTAL}}"
     )
 
@@ -131,26 +132,32 @@ class FancountCog(commands.Cog):
 
         rank_str  = f" — Global Ranking #{monthly_rank}" if monthly_rank else ""
         timestamp = datetime.now().strftime("%B %d, %Y")
-        title     = f"🏆 **Leaderboard (Club: {club} — Day {data_day}{rank_str})**"
-        strip     = discord.Embed(color=discord.Color.gold())
-        strip.set_footer(text=f"Data retrieved from Uma.moe API  •  {timestamp}")
+
+        embed = discord.Embed(
+            title=f"🏆 Leaderboard (Club: {club} — Day {data_day}{rank_str})",
+            color=discord.Color.gold(),
+        )
+        embed.set_footer(text=f"Data retrieved from Uma.moe API  •  {timestamp}")
 
         if not members:
-            await interaction.followup.send(content=f"{title}\nNo active members found.", embed=strip)
+            embed.description = "No active members found in the API response."
+            await interaction.followup.send(embed=embed)
             return
 
         if daily_goal <= 0:
-            lines = "\n".join(
-                f"{i:>2}. {m['trainer_name']:<16}  {_fmt(m['monthly_earned'])}"
-                for i, m in enumerate(members, 1)
-            )
-            await interaction.followup.send(
-                content=f"{title}\n⚠️ No daily goal set — use `/set_goal` first.\n```\n{lines}\n```",
-                embed=strip,
+            embed.description = (
+                "⚠️ No daily goal set — use `/set_goal` first.\n\n"
+                + "```\n"
+                + "\n".join(
+                    f"{i:>2}. {m['trainer_name']:<13}  {_fmt(m['monthly_earned'])}"
+                    for i, m in enumerate(members, 1)
+                )
+                + "\n```"
             )
         else:
-            table = _build_table(members, data_day, daily_goal)
-            await interaction.followup.send(content=f"{title}\n{table}", embed=strip)
+            embed.description = _build_table(members, data_day, daily_goal)
+
+        await interaction.followup.send(embed=embed)
 
 
 async def setup(bot: commands.Bot):
