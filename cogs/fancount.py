@@ -10,13 +10,13 @@ from scraper import fetch_club_data
 
 logger = logging.getLogger(__name__)
 
-# ANSI codes (Discord supports these inside ```ansi code blocks)
+# ANSI colour codes (supported in ```ansi code blocks)
 _YELLOW = "\033[33m"
 _RESET  = "\033[0m"
 
-# Column widths — total ~53 chars to fit inside a Discord embed code block
+# Column widths — plain message code block, no embed width constraint.
 _W_RANK    = 3
-_W_NAME    = 12
+_W_NAME    = 16   # fits longest Umamusume trainer names (~15 chars)
 _W_DAILY   = 6
 _W_SURPLUS = 7
 _W_TARGET  = 6
@@ -35,7 +35,6 @@ _SEP_LINE  = "-" * _ROW_WIDTH
 
 
 def _fmt(n: int, sign: bool = False) -> str:
-    """Compact fan-count formatter.  sign=True forces a + prefix on positives."""
     prefix = ("+" if n >= 0 else "-") if sign else ("" if n >= 0 else "-")
     a = abs(n)
     if a >= 1_000_000:
@@ -46,19 +45,13 @@ def _fmt(n: int, sign: bool = False) -> str:
 
 
 def _row(rank: int, name: str, daily: int, surplus: int, target: int, total: int) -> str:
-    name_col    = name[:_W_NAME]
-    rank_col    = f"{rank}."
-    daily_col   = _fmt(daily,   sign=True)
-    surplus_col = _fmt(surplus, sign=True)
-    target_col  = _fmt(target)
-    total_col   = _fmt(total)
     return (
-        f"{rank_col:>{_W_RANK}} | "
-        f"{name_col:<{_W_NAME}} | "
-        f"{daily_col:>{_W_DAILY}} | "
-        f"{surplus_col:>{_W_SURPLUS}} | "
-        f"{target_col:>{_W_TARGET}} | "
-        f"{total_col:>{_W_TOTAL}}"
+        f"{f'{rank}.':>{_W_RANK}} | "
+        f"{name[:_W_NAME]:<{_W_NAME}} | "
+        f"{_fmt(daily, sign=True):>{_W_DAILY}} | "
+        f"{_fmt(surplus, sign=True):>{_W_SURPLUS}} | "
+        f"{_fmt(target):>{_W_TARGET}} | "
+        f"{_fmt(total):>{_W_TOTAL}}"
     )
 
 
@@ -85,8 +78,7 @@ def _build_table(members: list, data_day: int, daily_goal: int) -> str:
     if below:
         lines.append(_divider("Players Behind Quota"))
         for m, target, surplus in below:
-            line = _row(rank, m["trainer_name"], m["daily_earned"], surplus, target, m["monthly_earned"])
-            lines.append(f"{_YELLOW}{line}{_RESET}")
+            lines.append(f"{_YELLOW}{_row(rank, m['trainer_name'], m['daily_earned'], surplus, target, m['monthly_earned'])}{_RESET}")
             rank += 1
 
     return "```ansi\n" + "\n".join(lines) + "\n```"
@@ -132,39 +124,33 @@ class FancountCog(commands.Cog):
             )
             return
 
-        members     = result["members"]
-        data_day    = result["data_day"]
+        members      = result["members"]
+        data_day     = result["data_day"]
         monthly_rank = result.get("monthly_rank")
-        daily_goal  = club_row["daily_goal"]
+        daily_goal   = club_row["daily_goal"]
 
         rank_str  = f" — Global Ranking #{monthly_rank}" if monthly_rank else ""
         timestamp = datetime.now().strftime("%B %d, %Y")
-
-        embed = discord.Embed(
-            title=f"🏆 Leaderboard (Club: {club} — Day {data_day}{rank_str})",
-            color=discord.Color.gold(),
-        )
-        embed.set_footer(text=f"Data retrieved from Uma.moe API  •  {timestamp}")
+        title     = f"🏆 **Leaderboard (Club: {club} — Day {data_day}{rank_str})**"
+        strip     = discord.Embed(color=discord.Color.gold())
+        strip.set_footer(text=f"Data retrieved from Uma.moe API  •  {timestamp}")
 
         if not members:
-            embed.description = "No active members found in the API response."
-            await interaction.followup.send(embed=embed)
+            await interaction.followup.send(content=f"{title}\nNo active members found.", embed=strip)
             return
 
         if daily_goal <= 0:
-            embed.description = (
-                "⚠️ No daily goal set — use `/set_goal` first.\n\n"
-                + "```\n"
-                + "\n".join(
-                    f"{i:>2}. {m['trainer_name']:<12}  {_fmt(m['monthly_earned'])}"
-                    for i, m in enumerate(members, 1)
-                )
-                + "\n```"
+            lines = "\n".join(
+                f"{i:>2}. {m['trainer_name']:<16}  {_fmt(m['monthly_earned'])}"
+                for i, m in enumerate(members, 1)
+            )
+            await interaction.followup.send(
+                content=f"{title}\n⚠️ No daily goal set — use `/set_goal` first.\n```\n{lines}\n```",
+                embed=strip,
             )
         else:
-            embed.description = _build_table(members, data_day, daily_goal)
-
-        await interaction.followup.send(embed=embed)
+            table = _build_table(members, data_day, daily_goal)
+            await interaction.followup.send(content=f"{title}\n{table}", embed=strip)
 
 
 async def setup(bot: commands.Bot):
