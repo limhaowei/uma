@@ -17,7 +17,7 @@ _RESET  = "\033[0m"
 # Column widths — embed code block, ~46 char limit.
 # Using | separator (1 char) to fit all 5 columns: 3+5+13+6+7+6+5 = 45 chars.
 _W_RANK    = 3   # "30." = 3 chars
-_W_NAME    = 13  # names > 13 chars are truncated
+_W_NAME    = 12  # names longer than this get a continuation line below
 _W_DAILY   = 6   # "+9.9M" = 6 chars; "Daily" = 5 → padded to 6
 _W_SURPLUS = 7   # "Surplus" header = 7 chars
 _W_TARGET  = 6   # "Target" header = 6 chars
@@ -45,15 +45,21 @@ def _fmt(n: int, sign: bool = False) -> str:
     return f"{prefix}{a}"
 
 
-def _row(rank: int, name: str, daily: int, surplus: int, target: int, total: int) -> str:
-    return (
-        f"{f'{rank}.':>{_W_RANK}}|"
-        f"{name[:_W_NAME]:<{_W_NAME}}|"
+def _rows(rank: int, name: str, daily: int, surplus: int, target: int, total: int) -> list[str]:
+    """Return 1 line for short names, 2 lines for names longer than _W_NAME.
+    Long names: full name on top, stats indented below."""
+    data_cols = (
         f"{_fmt(daily, sign=True):>{_W_DAILY}}|"
         f"{_fmt(surplus, sign=True):>{_W_SURPLUS}}|"
         f"{_fmt(target):>{_W_TARGET}}|"
         f"{_fmt(total):>{_W_TOTAL}}"
     )
+    if len(name) <= _W_NAME:
+        return [f"{f'{rank}.':>{_W_RANK}}|{name:<{_W_NAME}}|{data_cols}"]
+    return [
+        f"{f'{rank}.':>{_W_RANK}}|{name}",
+        f"{'':>{_W_RANK}}|{' ' * _W_NAME}|{data_cols}",
+    ]
 
 
 def _divider(label: str) -> str:
@@ -73,13 +79,14 @@ def _build_table(members: list, data_day: int, daily_goal: int) -> str:
 
     rank = 1
     for m, target, surplus in above:
-        lines.append(_row(rank, m["trainer_name"], m["daily_earned"], surplus, target, m["monthly_earned"]))
+        lines.extend(_rows(rank, m["trainer_name"], m["daily_earned"], surplus, target, m["monthly_earned"]))
         rank += 1
 
     if below:
         lines.append(_divider("Players Behind Quota"))
         for m, target, surplus in below:
-            lines.append(f"{_YELLOW}{_row(rank, m['trainer_name'], m['daily_earned'], surplus, target, m['monthly_earned'])}{_RESET}")
+            for line in _rows(rank, m["trainer_name"], m["daily_earned"], surplus, target, m["monthly_earned"]):
+                lines.append(f"{_YELLOW}{line}{_RESET}")
             rank += 1
 
     return "```ansi\n" + "\n".join(lines) + "\n```"
