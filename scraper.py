@@ -9,6 +9,10 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://uma.moe/api/v4/circles"
 
+# Uma.moe rejects requests without a same-origin Referer with a
+# {"error":"browser_proof_required"} 403. Sending it satisfies the check.
+HEADERS = {"Referer": "https://uma.moe/"}
+
 
 async def _fetch_month(
     session: aiohttp.ClientSession, circle_id: str, year: int, month: int
@@ -111,7 +115,7 @@ async def fetch_club_data(circle_id: str) -> dict:
     else:
         data_day = today
 
-    async with aiohttp.ClientSession() as session:
+    async with aiohttp.ClientSession(headers=HEADERS) as session:
         data = await _fetch_month(session, circle_id, year, month)
 
     if not data or "members" not in data:
